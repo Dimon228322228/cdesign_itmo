@@ -1,64 +1,91 @@
 `timescale 1ns / 1ps
+`include "addr.v"
 
-module sqrt (
-    input             clk_i,
-    input             rst_i,
-    input      [8:0]  x_bi,
-    input             start_i,
-    output            busy_o,
-    output reg [7:0]  y_bo
+module sqrt #(parameter N = 10)(
+    input              clk,
+    input              reset,
+    input              start,
+    input  [N-1:0]     a,
+    output             busy,
+    output reg [N/2:0] root
 );
 
-    localparam IDLE = 1'b0;
-    localparam WORK = 1'b1;
+    reg  [N:0] add_a, add_b;
+    wire [N:0] add_sum;
+    addr #(.WIDTH(N+1)) u_add (.a(add_a), .b(add_b), .sum(add_sum));
 
-    reg         state;
-    reg  [9:0]  x;      
-    reg  [9:0]  y;      
-    reg  [9:0]  m;
-    wire [9:0]  y_shifted;   
-    wire [9:0]  b_tmp;    
-    wire        end_step;
+    localparam IDLE     = 3'd0;
+    localparam CHECK    = 3'd1;
+    localparam BODY     = 3'd2;
+    localparam WAIT_SUB = 3'd3;
+    localparam SHIFT_M  = 3'd4;
 
-    assign y_shifted = y >> 1;   
-    assign b_tmp     = y | m;    
-    assign end_step  = (m == 10'd0);
-    assign busy_o = state;
+    reg [2:0]   state;
+    reg [N-1:0] x;
+    reg [N-1:0] y;
+    reg [N-1:0] y_shifted;
+    reg [N-1:0] m;
+    wire [N-1:0] b;
 
-    always @(posedge clk_i) begin
-        if (rst_i) begin
-            state <= IDLE;
-            x     <= 10'd0;
-            y     <= 10'd0;
-            m     <= 10'd0;
-            y_bo  <= 8'd0;
+    assign busy = (state != IDLE);
+    assign b    = y | m;
+
+    always @(posedge clk) begin
+        if (reset) begin
+            state     <= IDLE;
+            root      <= 0;
+            x         <= 0;
+            y         <= 0;
+            y_shifted <= 0;
+            m         <= 0;
+            add_a     <= 0;
+            add_b     <= 0;
         end else begin
             case (state)
+
                 IDLE: begin
-                    if (start_i) begin
-                        state <= WORK;
-                        x     <= {1'b0, x_bi};
-                        y     <= 10'd0;
-                        m     <= 10'b01_0000_0000;
-                        y_bo  <= 8'd0;
+                    if (start) begin
+                        x     <= a;
+                        y     <= {N{1'b0}};
+                        m     <= {{(N-1){1'b0}}, 1'b1} << (N-2);
+                        root  <= 0;
+                        state <= CHECK;
                     end
                 end
-                WORK: begin
-                    if (end_step) begin
+
+                CHECK: begin
+                    if (m == {N{1'b0}}) begin
+                        root  <= y[N/2:0];
                         state <= IDLE;
-                        y_bo  <= y[7:0];
                     end else begin
-                        if (x >= b_tmp) begin
-                            x <= x - b_tmp;
-                            y <= y_shifted | m;
-                        end else begin
-                            y <= y_shifted;
-                        end
-                        m <= m >> 2;
+                        state <= BODY;
                     end
                 end
+
+                BODY: begin
+                    y_shifted <= y >> 1;
+                    if (x >= b) begin
+                        add_a <= {1'b0, x};
+                        add_b <= ~{1'b0, b} + {{N{1'b0}}, 1'b1};
+                        state <= WAIT_SUB;
+                    end else begin
+                        y     <= y >> 1;
+                        state <= SHIFT_M;
+                    end
+                end
+
+                WAIT_SUB: begin
+                    x     <= add_sum[N-1:0];
+                    y     <= y_shifted | m;
+                    state <= SHIFT_M;
+                end
+
+                SHIFT_M: begin
+                    m     <= m >> 2;
+                    state <= CHECK;
+                end
+
             endcase
         end
     end
-
 endmodule
